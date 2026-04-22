@@ -5,5 +5,10 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiofiles>=25.1.0",
     "django>=6.0.4",
+    "fastapi[standard]>=0.136.0",
+    "motor>=3.7.1",
+    "pymongo>=4.17.0",
+    "redis>=7.4.0",
 ]
