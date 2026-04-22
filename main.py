@@ -115,7 +115,7 @@ async def get_student(id: str):
 @app.get("/students", status_code=status.HTTP_200_OK)
 async def all_students():
     try:
-        #  SAFE REDIS
+        
         if r:
             cached_data = r.get("students")
             if cached_data:
