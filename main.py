@@ -158,7 +158,7 @@ async def update_student(id: str, student: Student):
 
     return {"message": "Student updated successfully"}
 
-# ------------------ DELETE ------------------
+# ------------------ DELETE -----------------
 
 @app.delete("/student/{id}")
 async def delete_student(id: str):
