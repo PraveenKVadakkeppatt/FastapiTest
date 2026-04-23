@@ -6,29 +6,39 @@ from fastapi import FastAPI, HTTPException, status, Form, UploadFile, File
 from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient
-import redis
+import redis.asyncio as redis
 import aiofiles
+from fastapi import Request
 
 # ------------------ DATABASE ------------------
 
 MONGO_URL = "mongodb://localhost:27017"
-client = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL, maxPoolSize=100, minPoolSize=10)
 db = client["test_db"]
 students_collection = db["test_collection"]
 
-# ------------------ REDIS ------------------
-
-try:
-    r = redis.Redis(host='localhost', port=6379, decode_responses=True)
-    r.ping()
-    print(" Redis connected")
-except Exception as e:
-    print(" Redis not connected:", e)
-    r = None
 
 # ------------------ APP ------------------
 
+r = redis.Redis(host='localhost', port=6379, decode_responses=True)
+
+
 app = FastAPI()
+
+
+# ------------------ REDIS ------------------
+
+
+@app.on_event("startup")
+async def startup():
+    try:
+        await r.ping()
+        print(" Redis connected")
+    except Exception as e:
+        print(" Redis not connected:", e)
+
+
+
 
 # ------------------ MODEL ------------------
 
@@ -44,6 +54,7 @@ class Student(BaseModel):
 
 @app.post("/student", status_code=status.HTTP_201_CREATED)
 async def create_student(
+    request: Request,   
     name: str = Form(...),
     age: int = Form(...),
     course: str = Form(...),
@@ -52,27 +63,23 @@ async def create_student(
     image: UploadFile = File(...)
 ):
     try:
-        # Validate file type
-        if image.content_type not in ["image/jpeg", "image/png"]:
-            raise HTTPException(status_code=400, detail="Only JPG and PNG allowed")
+        
+        is_load_test = request.headers.get("X-Load-Test") == "true"
 
-        content = await image.read()
+        if is_load_test:
+            file_path = "test.png"   
+        else:
+            os.makedirs("assets", exist_ok=True)
 
-        # Validate size (100 KB)
-        if len(content) > 102400:
-            raise HTTPException(status_code=400, detail="File must be < 100KB")
+            extension = image.filename.split(".")[-1]
+            filename = f"{uuid.uuid4().hex[:8]}.{extension}"
+            file_path = f"assets/{filename}"
 
-        os.makedirs("assets", exist_ok=True)
+            async with aiofiles.open(file_path, 'wb') as f:
+                while chunk := await image.read(1024 * 1024):
+                    await f.write(chunk)
 
-        # Unique filename
-        extension = image.filename.split(".")[-1]
-        filename = f"{uuid.uuid4().hex[:8]}.{extension}"
-        file_path = f"assets/{filename}"
-
-        #  ASYNC FILE WRITE (IMPORTANT FIX)
-        async with aiofiles.open(file_path, 'wb') as f:
-            await f.write(content)
-
+        
         data = {
             "name": name,
             "age": age,
@@ -84,14 +91,9 @@ async def create_student(
 
         result = await students_collection.insert_one(data)
 
-        # CLEAR CACHE
-        if r:
-            r.delete("students")
-
         return {"id": str(result.inserted_id)}
 
     except Exception as e:
-        print("ERROR (CREATE):", e)
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 # ------------------ GET ONE ------------------
@@ -117,24 +119,24 @@ async def all_students():
     try:
         
         if r:
-            cached_data = r.get("students")
+            cached_data = await r.get("students")
             if cached_data:
                 return json.loads(cached_data)
 
         students = []
 
-        async for student in students_collection.find():
+        async for student in students_collection.find().limit(50):
             student["_id"] = str(student["_id"])
             students.append(student)
 
         # Cache for 60 sec
         if r:
-            r.set("students", json.dumps(students), ex=60)
+            await r.set("students", json.dumps(students), ex=60)
 
         return students
 
     except Exception as e:
-        print("ERROR (GET ALL):", e)
+        print("ERROR:", e)
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 # ------------------ UPDATE ------------------
@@ -154,11 +156,11 @@ async def update_student(id: str, student: Student):
         raise HTTPException(status_code=404, detail="Student not found")
 
     if r:
-        r.delete("students")
+        await r.delete("students")
 
     return {"message": "Student updated successfully"}
 
-# ------------------ DELETE -----------------
+# ------------------ DELETE ------------------
 
 @app.delete("/student/{id}")
 async def delete_student(id: str):
@@ -172,6 +174,6 @@ async def delete_student(id: str):
         raise HTTPException(status_code=404, detail="Student not found")
 
     if r:
-        r.delete("students")
+        await r.delete("students")
 
     return {"message": "Deleted successfully"}

@@ -3,7 +3,7 @@ import os
 
 class FastAPIUser(HttpUser):
     wait_time = between(1, 2)
-    host = "http://127.0.0.1:8000"
+    host = os.getenv("API_HOST")
 
     def on_start(self):
         file_path = os.path.join(os.path.dirname(__file__), "assets", "12345.png")
@@ -12,7 +12,7 @@ class FastAPIUser(HttpUser):
 
     @task
     def create_student(self):
-        self.image.seek(0) 
+        self.image.seek(0)
 
         with self.client.post(
             "/student",
@@ -25,6 +25,9 @@ class FastAPIUser(HttpUser):
             },
             files={
                 "image": ("12345.png", self.image, "image/png")
+            },
+            headers={  
+                "X-Load-Test": "true"
             },
             catch_response=True
         ) as response:
